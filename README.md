@@ -83,7 +83,7 @@ Inventory and publication have separate transactions. If publication fails, succ
 
 The watchdog schedule uses Eastern wall-clock deadlines; business dates are explicit and unchanged during retries. Fixed fixture dates are historical, so enabling the watchdog now will correctly regard unfinished fixture requests as overdue. Backdated reconstruction, corrected same-day versions, source deletions, complex calendars, stress testing, retention automation and notification integrations are out of scope.
 
-The dynamic-table alternative is executable preparation, not a second implementation of atomic history publication. See the workbook for when to choose a DT chain, tasks, or a hybrid. Eleven independent producers and eleven sequential transformation steps are different graphs; map the actual dependencies before migrating.
+The dynamic-table alternative is executable preparation, not a second implementation of atomic history publication. See [workbook section 8](docs/WORKBOOK.md#8-choosing-dynamic-tables-tasks-or-a-hybrid) for the decision criteria, a hybrid recipe, and native task features this sample does not use. Eleven independent producers and eleven sequential transformation steps are different graphs; map the actual dependencies before migrating.
 
 ## Local checks
 

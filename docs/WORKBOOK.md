@@ -210,6 +210,59 @@ Fill the blank cells together with the customer; they are intentionally empty. R
 
 Run [08_dynamic_table_alternative.sql](../sql/08_dynamic_table_alternative.sql) for a working one-day preparation comparison: 101 rows, 11 eligible, exact parity with the procedural candidate. A controlled source mutation demonstrates why fresh prepared data and approved published data are different. It does not replace the full transactional publisher; select a pure DT chain for declarative transformations, or a hybrid for this explicit publication contract. See [the hands-on instructions](HANDS_ON.md#6-compare-a-dynamic-table-preparation-path).
 
+## 8. Choosing dynamic tables, tasks, or a hybrid
+
+Snowflake's [decision guide](https://docs.snowflake.com/en/user-guide/dynamic-tables/decision-guide) recommends dynamic tables (DTs) for new declarative multi-table SQL pipelines, and streams plus tasks where procedural control is needed. Use the criteria below per pipeline step, not per whole workflow.
+
+| Criterion | Dynamic tables | Streams + tasks + procedures |
+|---|---|---|
+| Logic style | Declarative SELECT | Procedural: IF/ELSE, loops, multiple statements |
+| Joins, aggregations, layered preparation | Preferred | Possible, more code |
+| Stored procedures, external functions, side effects | Not in the definition | Preferred |
+| MERGE / upsert | Single-statement only via custom incremental refresh (`REFRESH USING ... MERGE INTO SELF`) | Any number of statements |
+| SCD2 history | Hand-built single MERGE with custom incremental refresh; otherwise use tasks | Preferred (this sample) |
+| Atomic writes to several targets with a receipt | No: each refresh is atomic, a multi-table manual refresh is not atomic across tables and cannot run inside `BEGIN...COMMIT` | Explicit transaction in a procedure |
+| Non-deterministic functions (`SEQ`, `UUID_STRING`, `RANDOM`) | Not supported incrementally | Supported |
+| Sources | Tables, views, other DTs; not streams, external tables or directory tables | Any, including streams |
+| Freshness | `TARGET_LAG` (minimum 1 minute), freshness-based, not completeness-based | Triggered or scheduled |
+| Scheduling control | Target lag, `DOWNSTREAM`, or manual refresh with `SCHEDULER = DISABLE` | CRON, triggers, retries, graph `AFTER` edges |
+| Readiness of independent producers for a business date | No native gate | Control tables checked in a procedure (this sample) |
+| Historical stability | `FROZEN WHERE` regions and `BACKFILL FROM` keep closed dates fixed | Application rules |
+| Schema change | Definition change reinitializes | `ALTER TABLE`, no reprocessing |
+| Operations | Refresh history, automatic dependency ordering, low code | More code, full control |
+
+Verify current availability and limits for custom incremental refresh, frozen regions, backfill and refresh modes in the [DT documentation](https://docs.snowflake.com/en/user-guide/dynamic-tables/overview) before relying on them; several changed during 2026.
+
+**When to choose which:**
+
+- **Pure DT chain:** every step is a deterministic SELECT, freshness is acceptable as a lag, and no step needs a readiness gate, side effect or multi-target atomic commit.
+- **Pure tasks and procedures:** the logic is procedural, writes several targets atomically, calls external systems, or must wait for a business-date completeness contract.
+- **Hybrid (recommended shape for this workshop's problem):** DTs for declarative preparation; tasks and procedures for readiness, freezing, quality gates and publication.
+
+### Hybrid recipe
+
+1. Producers append completion receipts. The triggered root task captures them, as in this sample.
+2. A procedure checks readiness for the date/version (all required producers, watermark, file manifest).
+3. When ready, the task runs `ALTER DYNAMIC TABLE ... REFRESH` on preparation DTs created with `SCHEDULER = DISABLE`, outside any explicit transaction. Several DTs can be refreshed together at one data timestamp.
+4. The procedure confirms each refresh succeeded in `INFORMATION_SCHEMA.DYNAMIC_TABLE_REFRESH_HISTORY` for that refresh's `DATA_TIMESTAMP` before using the result.
+5. The procedure freezes the prepared rows into the versioned candidate, runs quality gates, and publishes history plus the completion receipt in one transaction, as `RUN_STAGE` does.
+
+[08_dynamic_table_alternative.sql](../sql/08_dynamic_table_alternative.sql) demonstrates steps 3 and 5 in isolation (manual refresh, freezing, parity). It does not wire DTs into the publisher. For moving existing stream/task code, see [Migrate from streams and tasks](https://docs.snowflake.com/en/user-guide/dynamic-tables/migrate-streams-tasks).
+
+### Task features not used in this sample
+
+The sample favors readable control tables. These native features are worth evaluating for a production design ([task graphs](https://docs.snowflake.com/en/user-guide/tasks-graphs), [ALTER TASK](https://docs.snowflake.com/en/sql-reference/sql/alter-task)):
+
+- **Return values and conditional children.** The root can call `SYSTEM$SET_RETURN_VALUE`; a child `WHEN` using `SYSTEM$GET_PREDECESSOR_RETURN_VALUE` can skip publication when nothing is ready, instead of running and returning WAIT.
+- **Finalizer task (`FINALIZE`).** Runs after the graph succeeds or fails; a natural place for notifications and cleanup. It does not run if the root is skipped.
+- **Notifications.** `ERROR_INTEGRATION` and `SUCCESS_INTEGRATION` on tasks, or `SYSTEM$SEND_EMAIL` from a finalizer. This sample records warnings only.
+- **Retry.** `TASK_AUTO_RETRY_ATTEMPTS` re-runs a failed graph and `EXECUTE TASK ... RETRY LAST` restarts from the failed task. These cover failed runs; they do not re-check work that is pending because an input has not arrived, which is why the watchdog remains.
+- **Multi-predecessor `AFTER a, b, c`.** Correct fan-in when producers are tasks in the same graph. Independent external producers on separate schedules still need a receipt and readiness table.
+- **Serverless tasks.** Omit `WAREHOUSE` and set `TARGET_COMPLETION_INTERVAL`; Snowflake sizes compute.
+- **Trigger latency.** Triggered tasks run at most every 30 seconds by default; `USER_TASK_MINIMUM_TRIGGER_INTERVAL_IN_SECONDS` can lower this to 10.
+- **`CONFIG` and `EXECUTE TASK ... USING CONFIG`.** Graph-level parameters, useful for controlled replays. Do not treat them as an immutable business-data snapshot.
+- **Lock waits.** `LOCK_TIMEOUT` defaults to 12 hours. The sample tasks set it to 60 seconds so a blocked writer fails fast and is retried rather than hanging.
+
 ## Optional technical appendix
 
 Follow the root README for exact script order and safety controls. All tasks are suspended at installation. No account profile is included. Setup is not idempotent: do not rerun against an existing installation. Reading this workbook never executes SQL.
