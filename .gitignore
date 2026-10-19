@@ -1,0 +1,11 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+*.pem
+*.p8
+*.key
+connections.toml
+__pycache__/
+.venv/
+test-results/

@@ -1,0 +1,49 @@
+<mxfile host="app.diagrams.net" type="device">
+ <diagram id="current" name="Current - generic external orchestration">
+  <mxGraphModel adaptiveColors="auto" page="1" pageWidth="1200" pageHeight="1000"><root>
+   <mxCell id="0"/><mxCell id="1" parent="0"/>
+   <mxCell id="title" value="Current pattern: separate map, runtime and data" style="text;fontSize=24;fontStyle=1;align=left;" vertex="1" parent="1"><mxGeometry x="40" y="20" width="1100" height="60" as="geometry"/></mxCell>
+   <mxCell id="control" value="External orchestration service" style="swimlane;startSize=35;fillColor=#fff2cc;fontSize=18;" vertex="1" parent="1"><mxGeometry x="40" y="120" width="1120" height="260" as="geometry"/></mxCell>
+   <mxCell id="map" value="Job definitions, dependencies and run status" style="rounded=1;whiteSpace=wrap;fontSize=17;" vertex="1" parent="control"><mxGeometry x="40" y="80" width="280" height="120" as="geometry"/></mxCell>
+   <mxCell id="dispatcher" value="Dispatcher: poll required parents and substitute parameters" style="rounded=1;whiteSpace=wrap;fontSize=17;" vertex="1" parent="control"><mxGeometry x="420" y="80" width="280" height="120" as="geometry"/></mxCell>
+   <mxCell id="runtime" value="Workflow execution runtime" style="rounded=1;whiteSpace=wrap;fontSize=17;" vertex="1" parent="control"><mxGeometry x="800" y="80" width="280" height="120" as="geometry"/></mxCell>
+   <mxCell id="data" value="Warehouse: eleven producer outputs feed two business jobs" style="swimlane;startSize=35;fillColor=#dae8fc;fontSize=18;" vertex="1" parent="1"><mxGeometry x="40" y="500" width="1120" height="260" as="geometry"/></mxCell>
+   <mxCell id="inventory" value="Inventory procedure" style="rounded=1;whiteSpace=wrap;fontSize=17;" vertex="1" parent="data"><mxGeometry x="40" y="80" width="280" height="120" as="geometry"/></mxCell>
+   <mxCell id="quality" value="Prepare result and apply application quality rules" style="rounded=1;whiteSpace=wrap;fontSize=17;" vertex="1" parent="data"><mxGeometry x="420" y="80" width="280" height="120" as="geometry"/></mxCell>
+   <mxCell id="publish" value="Publish current and historical data" style="rounded=1;whiteSpace=wrap;fontSize=17;" vertex="1" parent="data"><mxGeometry x="800" y="80" width="280" height="120" as="geometry"/></mxCell>
+   <mxCell id="note" value="Illustrative pattern only. No organization, real platform inventory or production quality policy is represented." style="rounded=1;whiteSpace=wrap;fillColor=#fff2cc;fontSize=17;" vertex="1" parent="1"><mxGeometry x="40" y="830" width="1120" height="100" as="geometry"/></mxCell>
+   <mxCell id="e1" edge="1" parent="1" source="map" target="dispatcher" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;"><mxGeometry relative="1" as="geometry"/></mxCell>
+   <mxCell id="e2" edge="1" parent="1" source="dispatcher" target="runtime" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;"><mxGeometry relative="1" as="geometry"/></mxCell>
+   <mxCell id="e3" edge="1" parent="1" source="runtime" target="inventory" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="980" y="440"/><mxPoint x="220" y="440"/></Array></mxGeometry></mxCell>
+   <mxCell id="e4" edge="1" parent="1" source="inventory" target="quality" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;"><mxGeometry relative="1" as="geometry"/></mxCell>
+   <mxCell id="e5" edge="1" parent="1" source="quality" target="publish" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;"><mxGeometry relative="1" as="geometry"/></mxCell>
+  </root></mxGraphModel>
+ </diagram>
+ <diagram id="proposed" name="Proposed - native tasks and quality gates">
+  <mxGraphModel adaptiveColors="auto" page="1" pageWidth="1200" pageHeight="1300"><root>
+   <mxCell id="0"/><mxCell id="1" parent="0"/>
+   <mxCell id="title" value="Snowflake: running order plus business safeguards" style="text;fontSize=24;fontStyle=1;align=left;" vertex="1" parent="1"><mxGeometry x="40" y="20" width="1120" height="60" as="geometry"/></mxCell>
+   <mxCell id="controls" value="Control tables: requirements, receipts, requests and completions" style="swimlane;startSize=35;fillColor=#dae8fc;fontSize=18;" vertex="1" parent="1"><mxGeometry x="40" y="120" width="1120" height="200" as="geometry"/></mxCell>
+   <mxCell id="parents" value="P01-P11 publish date/version completion receipts" style="rounded=1;whiteSpace=wrap;fontSize=17;" vertex="1" parent="controls"><mxGeometry x="30" y="60" width="290" height="110" as="geometry"/></mxCell>
+   <mxCell id="receipts" value="PRODUCER_EVENTS and append-only COMPLETION_STREAM" style="rounded=1;whiteSpace=wrap;fontSize=17;" vertex="1" parent="controls"><mxGeometry x="410" y="60" width="290" height="110" as="geometry"/></mxCell>
+   <mxCell id="pending" value="RECEIPTS + REQUESTS minus COMPLETIONS = durable pending work" style="rounded=1;whiteSpace=wrap;fontSize=17;" vertex="1" parent="controls"><mxGeometry x="790" y="60" width="300" height="110" as="geometry"/></mxCell>
+   <mxCell id="tasks" value="Task graph: AFTER stores parent/child execution order" style="swimlane;startSize=35;fillColor=#d5e8d4;fontSize=18;" vertex="1" parent="1"><mxGeometry x="40" y="430" width="1120" height="250" as="geometry"/></mxCell>
+   <mxCell id="capture" value="1. CAPTURE_ROOT: stream-triggered capture; commit receipts" style="rounded=1;whiteSpace=wrap;fontSize=17;" vertex="1" parent="tasks"><mxGeometry x="30" y="70" width="290" height="130" as="geometry"/></mxCell>
+   <mxCell id="inventory" value="2. INVENTORY_TASK: all-eleven gate; snapshot; quality; inventory transaction" style="rounded=1;whiteSpace=wrap;fontSize=17;" vertex="1" parent="tasks"><mxGeometry x="410" y="70" width="290" height="130" as="geometry"/></mxCell>
+   <mxCell id="publish" value="3. PUBLISH_TASK: candidate checks; history invariants; atomic publication receipt" style="rounded=1;whiteSpace=wrap;fontSize=17;" vertex="1" parent="tasks"><mxGeometry x="790" y="70" width="300" height="130" as="geometry"/></mxCell>
+   <mxCell id="ops" value="Recovery and observation: not replacements for blocking checks" style="swimlane;startSize=35;fillColor=#fff2cc;fontSize=18;" vertex="1" parent="1"><mxGeometry x="40" y="800" width="1120" height="250" as="geometry"/></mxCell>
+   <mxCell id="watch" value="WATCHDOG_TASK: log overdue work; capture; retry pending dates using the same procedures" style="rounded=1;whiteSpace=wrap;fontSize=17;" vertex="1" parent="ops"><mxGeometry x="30" y="70" width="290" height="130" as="geometry"/></mxCell>
+   <mxCell id="fail" value="Quality failure: rollback this job; retain last good history; log evidence; operator fixes and retries" style="rounded=1;whiteSpace=wrap;fillColor=#f8cecc;fontSize=17;" vertex="1" parent="ops"><mxGeometry x="410" y="70" width="290" height="130" as="geometry"/></mxCell>
+   <mxCell id="dmf" value="CURRENT_ENTITIES: optional DMFs + expectations; asynchronous monitoring, not a hard gate" style="rounded=1;whiteSpace=wrap;fontSize=17;" vertex="1" parent="ops"><mxGeometry x="790" y="70" width="300" height="130" as="geometry"/></mxCell>
+   <mxCell id="note" value="Synthetic workshop; runtime validation pending. P01-P02 directly feed inventory; P03-P11 feed publishing. This sample conservatively gates both jobs on all eleven. Inventory and publishing commit separately. All tasks install suspended. No external notifications configured." style="rounded=1;whiteSpace=wrap;fillColor=#fff2cc;fontSize=17;" vertex="1" parent="1"><mxGeometry x="40" y="1120" width="1120" height="120" as="geometry"/></mxCell>
+   <mxCell id="e1" edge="1" parent="1" source="parents" target="receipts" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;"><mxGeometry relative="1" as="geometry"/></mxCell>
+   <mxCell id="e2" edge="1" parent="1" source="receipts" target="capture" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;"><mxGeometry relative="1" as="geometry"><Array as="points"><mxPoint x="595" y="370"/><mxPoint x="215" y="370"/></Array></mxGeometry></mxCell>
+   <mxCell id="e3" edge="1" parent="1" source="capture" target="inventory" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;"><mxGeometry relative="1" as="geometry"/></mxCell>
+   <mxCell id="e4" edge="1" parent="1" source="inventory" target="publish" style="edgeStyle=orthogonalEdgeStyle;endArrow=block;"><mxGeometry relative="1" as="geometry"/></mxCell>
+   <mxCell id="e5" edge="1" parent="1" source="pending" target="publish" style="edgeStyle=orthogonalEdgeStyle;dashed=1;endArrow=block;"><mxGeometry relative="1" as="geometry"/></mxCell>
+   <mxCell id="e6" edge="1" parent="1" source="inventory" target="fail" style="edgeStyle=orthogonalEdgeStyle;dashed=1;endArrow=block;"><mxGeometry relative="1" as="geometry"/></mxCell>
+   <mxCell id="e7" edge="1" parent="1" source="publish" target="dmf" style="edgeStyle=orthogonalEdgeStyle;dashed=1;endArrow=block;"><mxGeometry relative="1" as="geometry"/></mxCell>
+   <mxCell id="e8" edge="1" parent="1" source="watch" target="capture" style="edgeStyle=orthogonalEdgeStyle;dashed=1;endArrow=block;"><mxGeometry relative="1" as="geometry"/></mxCell>
+  </root></mxGraphModel>
+ </diagram>
+</mxfile>
