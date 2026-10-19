@@ -2,7 +2,7 @@
 
 ## Result
 
-**Passed on 2026-10-19 in JGH-DEMO (sandbox alias).** Snowflake version **10.37.102**, Business Critical edition, X-Small dedicated warehouse. Runtime scope: the synthetic workshop, not production readiness or a customer-comprehension study. Account identifiers and raw query evidence remain private.
+**Passed on 2026-10-19 in an isolated instructor sandbox.** Snowflake version **10.37.102**, Business Critical edition, X-Small dedicated warehouse. Runtime scope: the synthetic workshop, not production readiness or a customer-comprehension study. Account identifiers and raw query evidence remain private.
 
 Initial execution used `ELEVEN_PRODUCER_LAB`. It exposed defects that were repaired before a separate fresh-namespace rehearsal. **The clean rehearsal completed at 15:40:48 UTC with `passed=true` and `cleanup_ok=true`.** It installed the corrected setup and all exercise scripts, passed all 19 assertions and both live-trigger phases, and stopped scheduled work. Private `test-results/` JSON retains per-script execution evidence. A final shutdown hardening change (skip an absent optional DT schema and filter task history by each task name) was separately executed successfully after that rehearsal.
 

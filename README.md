@@ -1,6 +1,29 @@
 # Eleven producers, one safe publication
 
-A customer-neutral Snowflake workshop about a common problem: eleven independent producers finish at different times, but two dependent jobs must publish one consistent business-day result.
+A customer-neutral Snowflake workshop that tackles a common data-engineering problem and walks through a native Snowflake solution.
+
+## The problem
+
+Many organizations run batch pipelines where multiple independent producers (data feeds, ETL jobs, file deliveries) must all complete before a downstream job can safely publish a consistent business-day result. Today this coordination typically lives in an external orchestrator — Airflow, Control-M, cron scripts, or a homegrown scheduler — that maintains its own dependency map, execution state, and retry logic outside the data warehouse.
+
+This creates several pain points:
+
+- **Split ownership.** The dependency graph, runtime state, and business data live in different systems. A "completed" status in the scheduler does not guarantee the right day's data actually landed, or that it landed completely.
+- **Fragile completion contracts.** Partial file deliveries, duplicate events, or wrong-version data can slip through when the orchestrator only checks "did the job exit zero" rather than "are all eleven producers' outputs present, correct, and for the expected business date."
+- **Difficult migration.** Replacing or upgrading the scheduler does not remove the need for a trustworthy completion contract. Teams often discover that scheduling logic and business-readiness logic are tangled together, making it hard to move one without breaking the other.
+
+The workshop uses a concrete scenario — eleven independent producers feeding a two-stage pipeline (inventory then publication) — to make these problems tangible.
+
+## The recommendation
+
+Move the dependency tracking, readiness checks, and execution ordering into Snowflake using native constructs:
+
+- **Streams and triggered tasks** replace external polling. A stream on an append-only completion-event table wakes the pipeline when new receipts arrive, without scheduled polling intervals.
+- **Stored procedures with scoped transactions** enforce the business contract. Readiness is checked against a durable checklist (all required producers, correct date and version), not inferred from task scheduling metadata. Publication commits history updates and completion receipts atomically — if the transaction fails, nothing is half-published.
+- **A watchdog task** handles recovery. Because business completions are tracked in persistent tables (not just stream offsets), a scheduled watchdog can find overdue work and retry it without waiting for another event.
+- **Dynamic tables** are shown as a preparation-path alternative for the declarative transformation portion. They handle incremental refresh well, but do not replace the transactional publication contract where atomicity across multiple target tables matters.
+
+The key insight is separating two concerns that external orchestrators often conflate: **running order** (which task runs next) belongs in `AFTER` edges and schedules; **business readiness** (are all eleven producers' outputs present and correct for this business date) belongs in application-level control tables checked inside the procedure.
 
 **Start with [the workbook](docs/WORKBOOK.md)** for the concepts, then [the guided exercises](docs/HANDS_ON.md) for a 150-minute hands-on workshop. [Facilitator timing and teach-back](docs/FACILITATOR.md) are included. All example entities, producer names, dates and data are synthetic. This is an educational sample, not an official supported product or a production-ready deployment.
 
@@ -18,7 +41,7 @@ A customer-neutral Snowflake workshop about a common problem: eleven independent
 - Runnable incremental dynamic-table preparation comparison, including frozen-candidate isolation.
 - Offline structural checks and an opt-in fresh-sandbox rehearsal runner with private evidence.
 
-**Validation status: Passed on 2026-10-19 in JGH-DEMO (sandbox alias).** Measured results: 19 deterministic assertions; real stream-triggered ten-parent wait and P11 release; exact historical-row parity; incremental DT preparation comparison; two passing optional DMF expectations. See [validation scope and remaining limits](docs/VALIDATION.md). This is a sandbox pass, not production certification or proof of customer comprehension.
+**Validation status: Passed on 2026-10-19 in an isolated instructor sandbox.** Measured results: 19 deterministic assertions; real stream-triggered ten-parent wait and P11 release; exact historical-row parity; incremental DT preparation comparison; two passing optional DMF expectations. See [validation scope and remaining limits](docs/VALIDATION.md). This is a sandbox pass, not production certification or proof of customer comprehension.
 
 ## Architecture at a glance
 
@@ -48,6 +71,7 @@ Task relationships live in `AFTER` definitions. Business readiness lives in appl
 7. Optionally run `06_live_trigger.sql` one section at a time. Wait for actual task completion; submission is not completion. It is not a run-all script.
 8. Run `08_dynamic_table_alternative.sql` for the one-day preparation comparison (after deterministic tests). It uses a separate schema and suspends its DT at the end.
 9. Run `07_stop.sql` **last**. It stops all four tasks, disables the optional DMF schedule, and suspends the optional DT. Inspect active executions; suspension does not cancel running work. DMF schedule changes can take ten minutes to propagate.
+10. To remove all workshop objects completely, run `09_teardown.sql` after `07_stop.sql`. This drops the database and warehouse. It is irreversible — all data, procedures, and task history are lost. Rerun `00_setup.sql` afterward for a fresh sandbox.
 
 No deployment is automatic. Nothing connects to Snowflake from opening the workbook or running the local static checker. SQL scripts are not safely re-runnable as an installer; use a new sandbox or deliberately clean up after reviewing all objects.
 
