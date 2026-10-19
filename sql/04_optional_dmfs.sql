@@ -14,5 +14,7 @@ ALTER VIEW CURRENT_ENTITIES ADD DATA METRIC FUNCTION
 ALTER VIEW CURRENT_ENTITIES SET DATA_METRIC_SCHEDULE='60 MINUTE';
 SELECT * FROM TABLE(SYSTEM$EVALUATE_DATA_QUALITY_EXPECTATIONS(
  REF_ENTITY_NAME=>'ELEVEN_PRODUCER_LAB.DEMO.CURRENT_ENTITIES'));
+-- CHECKPOINT: exactly 2 expectation rows; VALUE=0 and EXPECTATION_VIOLATED=FALSE.
+-- This is direct evaluation, not proof of a recurring scheduled measurement.
 -- An expectation violation does not automatically block a task or roll back data.
 -- This script does not configure email, external integrations or task suspension.

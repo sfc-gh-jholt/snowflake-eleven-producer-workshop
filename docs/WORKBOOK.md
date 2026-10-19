@@ -4,7 +4,7 @@
 
 **Goal:** understand how eleven independent producers can safely feed a two-job pipeline without rebuilding an entire custom orchestration platform.
 
-Read sections 1-7 in order. No login or code execution is required. Diagrams render on GitHub; the surrounding numbered descriptions also work in plain Markdown readers. SQL is optional and changes only an explicitly installed sandbox. Expected examples below are not captured execution results.
+Read sections 1-7 in order for the design. To run it, follow [the guided hands-on exercises](HANDS_ON.md); delivery timing and teach-back questions are in [the facilitator guide](FACILITATOR.md). The full session is approximately 150 minutes. Diagrams render on GitHub; the surrounding descriptions also work in plain Markdown readers. Only explicitly installed sandbox objects are changed. Expected checkpoints and measured rehearsal results are distinguished in [VALIDATION.md](VALIDATION.md).
 
 For editable boxes and connectors, open [architecture.drawio](architecture.drawio) in draw.io. It contains current and proposed pages. Mermaid diagrams below are the text-source alternative, not automatically synchronized with that file.
 
@@ -78,6 +78,57 @@ flowchart TD
 
 The eleven producer jobs are simulated by inserting completion receipts, not by creating eleven artificial scheduled tasks. P01/P02 directly feed inventory; P03-P11 feed publication. The sample waits for all eleven before inventory as a conservative policy. Making inventory start earlier requires a job-specific readiness gate and new tests.
 
+**Eleven producers is not eleven sequential steps.** Producers may run independently or in parallel. A customer's eleven-step chain, fan-in graph, conditional branches and external actions need to be inventoried before selecting Snowflake constructs. The mapping below is a design exercise, not an automatic conversion tool.
+
+### Map your current orchestration concepts
+
+| Current construct | Candidate Snowflake placement | What changes / what must remain explicit |
+|---|---|---|
+| Airflow dependency edges or Control-M predecessor conditions | Task graph `AFTER` edges | Same-graph execution order; does not prove external inputs match a business date. |
+| Airflow sensor, Control-M file/event condition, cron polling loop | Stream-triggered capture plus durable readiness | Arrival is a wake-up signal. File completeness, date, version and watermark remain application contracts. |
+| cron timing or scheduled SQL job | Scheduled root task | Choose interval versus calendar schedule deliberately; holidays and blackout rules need a defined calendar. |
+| SQL transformations currently run by scripts/operators | Dynamic-table chain where declarative SELECTs fit; procedures/tasks where transactions or side effects are needed | Convert and validate business SQL separately from orchestration. This sample does not translate arbitrary source code. |
+| Scheduler execution status | TASK_HISTORY plus business COMPLETIONS | Task success can mean WAIT. Business completion records must commit with business output. |
+| Retry policy | Task retries plus idempotent business procedures | Retries do not supply idempotency or repair bad inputs. Preserve the original date/version. |
+| SLA timer or missing-input alert | Expected REQUESTS, deadlines, watchdog and production notification integration | A producer that emits nothing needs a pre-registered expectation. This lab records warnings; it does not notify an operator. |
+| Airflow XCom or scheduler parameters | Explicit request identity; optionally native task graph CONFIG/return values | Do not treat task metadata as an immutable business-data snapshot. This sample uses control tables, not XCom emulation. |
+| External API/script execution or cross-platform workflow | Retain an external orchestrator or separately supported execution mechanism | Snowflake tasks do not automatically replace every external runtime or business calendar. |
+| History update and audit receipt | Transactional publisher | Define correction/deletion/backfill semantics before cutover. DT preparation does not make multiple target writes atomic. |
+
+These are conceptual mappings, not drop-in equivalence claims for every Airflow or Control-M configuration. Verify actual source-tool semantics, retry boundaries and calendars with the current owner. Native task/stream mechanics are described in the [task graph](https://docs.snowflake.com/en/user-guide/tasks-graphs) and [stream](https://docs.snowflake.com/en/user-guide/streams-intro) references.
+
+### Worked example: a customer's eleven-step workflow
+
+This example describes a migration decomposition; the executable sample below implements only the receipt/readiness, preparation and publication pattern.
+
+| Existing step | Proposed responsibility | Evidence needed before migration |
+|---|---|---|
+| 1. Receive files | Existing ingestion path plus file manifest | Complete delivery, not first file arrival |
+| 2. Parse input | Validated ingestion SQL/tool | Rejected-row and schema handling parity |
+| 3. Normalize keys | Declarative preparation / DT | Null, casing and type semantics |
+| 4. Deduplicate | Business-approved transformation | Agreed survivor policy; this lab rejects duplicates |
+| 5. Join reference data | Preparation / DT | Versioned reference snapshot and unmatched-key rules |
+| 6. Calculate eligibility | Preparation / DT or procedure | Row-by-row comparison; executable sample uses two Boolean requirements |
+| 7. Wait for independent feeds | Durable readiness contract | Every required producer/date/version/watermark |
+| 8. Freeze and quality-check result | Inventory-stage transaction | Immutable candidate, thresholds and accepted snapshot |
+| 9. Update history | Publish-stage transaction | Interval boundaries, changed/new/unchanged rows |
+| 10. Commit published completion | Same publish transaction | No success receipt on rollback |
+| 11. Notify and monitor | Monitoring plus approved notification channel | Measured delivery, escalation owner and deadline tests |
+
+Do not create eleven tasks just because the old workflow had eleven boxes. Merge trivial compatible SQL steps, split at meaningful failure/transaction boundaries, and retain external steps where appropriate. Likewise, do not collapse eleven independent producers into a single artificial chain.
+
+### Migration sequence and cutover gates
+
+1. **Inventory the real graph.** For each node record inputs, outputs, parent IDs, date/version parameters, schedule, side effects, execution owner, and retry boundary. Mark which steps must stay external.
+2. **Write the contract.** Define source-complete evidence, immutable versions, deadlines, deletions, corrected days, historical reconstruction and ordering. The sample's all-eleven gate is deliberately conservative, not a universal requirement.
+3. **Choose one bounded slice.** Port one preparation query and its publication contract. Use the warm-up, then the full lab, then the DT comparison to select the right boundary.
+4. **Shadow-run matched inputs.** Keep the old output authoritative. Compare keys, values, types, totals and history intervals in both directions on the same snapshot, including late and bad inputs. Row counts alone are insufficient.
+5. **Prove operations.** Test missing producers, duplicate receipts, bad data, retry after commit, empty-stream recovery, concurrency and operator notification. Define acceptable latency and cost with measured workload scale.
+6. **Cut over one consumer at a time.** Obtain a named owner's sign-off on parity and recovery. Pause the old publisher before enabling the new writer; keep a single authoritative publisher. Retain the old output and configuration for an agreed rollback window.
+7. **Rollback deliberately.** If agreed parity, freshness or correctness gates fail, stop the new publisher, confirm no in-flight writes, reconcile checkpoints, and restore the old consumer route. Avoid simultaneously replaying both writers into the same target. Do not delete evidence during rollback.
+
+**Customer exercise:** pick one actual workflow and fill in the fields from step 1 for every node. For each edge identify whether it represents execution order, data completeness, or an external side effect. A participant should be able to explain their mapping without pointing at the sample's generic P01-P11 labels.
+
 ## 3. Walk through one business day
 
 1. **Register expected work.** REQUESTS states which date/version should complete, its deadline and expected quality totals. Without expected work, a producer that never emits a receipt is invisible to an event-only system.
@@ -140,9 +191,11 @@ The lock is a real UPDATE to a pre-existing writer row, not an unenforced primar
 
 **Question:** Should another run add another historical row? **What happens:** completed job/date/version returns NOOP. **Expected result:** entity counters are 3 for 1-100 and 2 for 101; six job receipts for the three days. **Interpretation:** history changes only when the business value changes. **Decision:** define correction, deletion and historical-rebuild policy separately; those are deliberately rejected or out of scope here.
 
-These numbers describe the generated fixture, not a customer's data. See [test instructions](TESTING.md). This generic implementation has not yet been runtime-validated in Snowflake.
+These numbers describe the generated fixture, not a customer's data. See [guided execution](HANDS_ON.md), [test instructions](TESTING.md) and [measured validation](VALIDATION.md).
 
 ## 7. Choose a bounded pilot
+
+Fill the blank cells together with the customer; they are intentionally empty. Record an owner and a measurable acceptance criterion, not just a preferred feature.
 
 | Decision | Record the agreed rule / owner |
 |---|---|
@@ -155,7 +208,7 @@ These numbers describe the generated fixture, not a customer's data. See [test i
 | Which matched input snapshots prove parity with the old process? | |
 | Who approves cutover and rollback? | |
 
-Dynamic tables can replace suitable preparation queries, but they do not automatically define a business-date contract or make refresh and publication one atomic transaction. Compare one real transformation before choosing that alternative. This repository does not deploy a dynamic-table variant.
+Run [08_dynamic_table_alternative.sql](../sql/08_dynamic_table_alternative.sql) for a working one-day preparation comparison: 101 rows, 11 eligible, exact parity with the procedural candidate. A controlled source mutation demonstrates why fresh prepared data and approved published data are different. It does not replace the full transactional publisher; select a pure DT chain for declarative transformations, or a hybrid for this explicit publication contract. See [the hands-on instructions](HANDS_ON.md#6-compare-a-dynamic-table-preparation-path).
 
 ## Optional technical appendix
 

@@ -21,7 +21,13 @@ class RepositoryChecks(unittest.TestCase):
                     self.assertEqual(cell.find('mxGeometry').get('relative'), '1')
 
     def test_scripts_exist(self):
-        self.assertEqual(len(list((ROOT / 'sql').glob('*.sql'))), 8)
+        required = {
+            '00_preflight.sql', '00_setup.sql', '00_warmup.sql', '01_fixtures.sql',
+            '02_procedures.sql', '03_tasks.sql', '04_optional_dmfs.sql',
+            '05_tests.sql', '05_run_tests.sql', '06_live_trigger.sql', '07_stop.sql',
+            '08_dynamic_table_alternative.sql',
+        }
+        self.assertTrue(required.issubset({path.name for path in (ROOT / 'sql').glob('*.sql')}))
 
     def test_setup_does_not_replace_existing_database(self):
         setup = (ROOT / 'sql/00_setup.sql').read_text()
@@ -60,6 +66,54 @@ class RepositoryChecks(unittest.TestCase):
                     text = path.read_text()
                     self.assertNotRegex(text, r'/Users/|BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY')
                     self.assertNotRegex(text, r'https://[^\s)"<>]+\.slack\.com|snowflakecomputing\.com')
+
+    def test_guided_exercises_and_named_scenarios(self):
+        tests = (ROOT / 'sql/05_tests.sql').read_text()
+        runner = (ROOT / 'sql/05_run_tests.sql').read_text()
+        for name in ['TEST_01_RECEIPTS_AND_STREAM', 'TEST_02_READINESS_CONTRACT',
+                     'TEST_03_QUALITY_AND_DAY_ONE', 'TEST_04_ROLLBACK_AND_RECOVERY',
+                     'TEST_05_REPLAY_AND_PARITY']:
+            self.assertIn('PROCEDURE ' + name + '()', tests)
+            self.assertIn('CALL ' + name + '();', runner)
+        self.assertIn('MINUS SELECT * FROM HISTORY', tests)
+        self.assertIn('19 passes', runner)
+        for name in ['WORKBOOK.md', 'HANDS_ON.md', 'FACILITATOR.md', 'VALIDATION.md']:
+            self.assertTrue((ROOT / 'docs' / name).is_file())
+
+    def test_stop_covers_optional_compute(self):
+        stop = (ROOT / 'sql/07_stop.sql').read_text()
+        self.assertIn("SET DATA_METRIC_SCHEDULE = ''", stop)
+        self.assertIn('PREPARED SUSPEND', stop)
+        self.assertLess(stop.index('CAPTURE_ROOT SUSPEND'), stop.index('INVENTORY_TASK SUSPEND'))
+
+    def test_readiness_is_deduplicated_join(self):
+        setup = (ROOT / 'sql/00_setup.sql').read_text()
+        self.assertIn('AS PRODUCER', setup)
+        self.assertIn('SELECT DISTINCT PRODUCER,PROCESS_DATE,SOURCE_VERSION', setup)
+        self.assertIn('LEFT JOIN valid_receipts', setup)
+
+    def test_rehearsal_is_explicit_and_guarded(self):
+        runner = (ROOT / 'tests/rehearse.py').read_text()
+        self.assertIn("'--execute'", runner)
+        self.assertIn("'--expected-account'", runner)
+        self.assertIn("'database does not exist'", runner)
+        self.assertIn('finally:', runner)
+        self.assertNotIn('shell=True', runner)
+        self.assertIn("file('07_stop.sql')", runner)
+
+    def test_python_syntax(self):
+        import ast
+        for path in (ROOT / 'tests').glob('*.py'):
+            ast.parse(path.read_text(), filename=str(path))
+
+    def test_local_markdown_links(self):
+        import re
+        documents = [ROOT / 'README.md', *(ROOT / 'docs').glob('*.md')]
+        for path in documents:
+            for target in re.findall(r'\]\(([^)]+)\)', path.read_text()):
+                if '://' in target or target.startswith('#'):
+                    continue
+                self.assertTrue((path.parent / target.split('#')[0]).exists(), (path.name, target))
 
     def test_expected_counts_match_generator_math(self):
         history = {}

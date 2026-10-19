@@ -1,9 +1,11 @@
--- Run ONCE after 00-03 in a fresh sandbox; tasks must still be suspended.
--- These tests mutate only this project's fixtures. Stop on unexpected errors.
+-- Install named scenarios after 00-03. This file defines tests; it does not run them.
+-- Run 05_run_tests.sql ONCE, or call each scenario in order as documented.
+-- Scenarios share a progressive fixture: individually callable, NOT independent resets.
+-- Keep tasks suspended. Stop at the first unexpected error; do not wrap calls in a transaction.
 USE DATABASE ELEVEN_PRODUCER_LAB;
 USE SCHEMA DEMO;
 USE WAREHOUSE ELEVEN_PRODUCER_WH;
-CREATE PROCEDURE ASSERT_TEST(P_NAME VARCHAR,P_OK BOOLEAN,P_DETAIL VARCHAR)
+CREATE OR REPLACE PROCEDURE ASSERT_TEST(P_NAME VARCHAR,P_OK BOOLEAN,P_DETAIL VARCHAR)
 RETURNS VARCHAR LANGUAGE SQL AS $$
 DECLARE failed EXCEPTION(-20010,'Assertion failed: inspect TEST_RESULTS');
 BEGIN
@@ -13,10 +15,15 @@ BEGIN
  RETURN 'PASS';
 END; $$;
 
-EXECUTE IMMEDIATE $$
+CREATE OR REPLACE PROCEDURE TEST_01_RECEIPTS_AND_STREAM()
+RETURNS VARCHAR LANGUAGE SQL AS $$
 DECLARE outcome VARCHAR; before_rows NUMBER; after_rows NUMBER; value_count NUMBER;
  caught BOOLEAN DEFAULT FALSE;
 BEGIN
+ SELECT COUNT(*) INTO :value_count FROM PRODUCER_EVENTS;
+ IF(value_count<>0) THEN
+  CALL ASSERT_TEST('Scenario 1 requires fresh events',FALSE,'Use a fresh sandbox, not a replay of the tests');
+ END IF;
  CALL RUN_STAGE('2025-01-06','V1','INVENTORY',FALSE) INTO :outcome;
  CALL ASSERT_TEST('No receipts waits',:outcome='WAIT',:outcome);
  INSERT INTO PRODUCER_EVENTS(PRODUCER,PROCESS_DATE,SOURCE_VERSION,STATUS,WATERMARK,ROW_COUNT)
@@ -39,6 +46,17 @@ BEGIN
  CALL ASSERT_TEST('Commit consumes stream',:after_rows=0,'Durable receipts retained');
  CALL RUN_STAGE('2025-01-06','V1','INVENTORY',FALSE) INTO :outcome;
  CALL ASSERT_TEST('Ten of eleven waits',:outcome='WAIT',:outcome);
+ RETURN 'PASS: 5 assertions; ten receipts captured, no business completion';
+END; $$;
+
+CREATE OR REPLACE PROCEDURE TEST_02_READINESS_CONTRACT()
+RETURNS VARCHAR LANGUAGE SQL AS $$
+DECLARE outcome VARCHAR; value_count NUMBER;
+BEGIN
+ SELECT COUNT(*) INTO :value_count FROM RECEIPTS;
+ IF(value_count<>10) THEN
+  CALL ASSERT_TEST('Scenario 2 prerequisite',FALSE,'Run scenario 1 once first');
+ END IF;
  INSERT INTO PRODUCER_EVENTS(PRODUCER,PROCESS_DATE,SOURCE_VERSION,STATUS,WATERMARK,ROW_COUNT)
  VALUES('P01','2025-01-06','V1','SUCCESS','2025-01-06',0),
  ('P11','2025-01-05','V1','SUCCESS','2025-01-05',1),
@@ -56,6 +74,18 @@ BEGIN
  CALL ASSERT_TEST('Incomplete file waits',:outcome='WAIT',:outcome);
  UPDATE FILE_MANIFEST SET STATUS='SUCCESS' WHERE PROCESS_DATE='2025-01-06';
 
+ RETURN 'PASS: 2 assertions; all inputs ready, no business completion';
+END; $$;
+
+CREATE OR REPLACE PROCEDURE TEST_03_QUALITY_AND_DAY_ONE()
+RETURNS VARCHAR LANGUAGE SQL AS $$
+DECLARE outcome VARCHAR; value_count NUMBER; caught BOOLEAN DEFAULT FALSE;
+BEGIN
+ SELECT COUNT(*) INTO :value_count FROM READINESS
+ WHERE PROCESS_DATE='2025-01-06' AND MISSING_PARENTS=0 AND FILE_READY;
+ IF(value_count<>1) THEN
+  CALL ASSERT_TEST('Scenario 3 prerequisite',FALSE,'Run scenarios 1 and 2 first');
+ END IF;
  -- Corrupt a key, verify the hard gate, then repair before retry.
  UPDATE SOURCE_ENTITIES SET ENTITY_ID=1 WHERE PROCESS_DATE='2025-01-06' AND ENTITY_ID=100;
  caught:=FALSE;
@@ -75,6 +105,17 @@ BEGIN
  CALL RUN_STAGE('2025-01-06','V1','INVENTORY',FALSE) INTO :outcome;
  CALL ASSERT_TEST('Inventory replay is no-op',:outcome='NOOP',:outcome);
 
+ RETURN 'PASS: 3 assertions; day one published';
+END; $$;
+
+CREATE OR REPLACE PROCEDURE TEST_04_ROLLBACK_AND_RECOVERY()
+RETURNS VARCHAR LANGUAGE SQL AS $$
+DECLARE value_count NUMBER; after_rows NUMBER; caught BOOLEAN DEFAULT FALSE;
+BEGIN
+ SELECT COUNT(*) INTO :value_count FROM COMPLETIONS;
+ IF(value_count<>2) THEN
+  CALL ASSERT_TEST('Scenario 4 prerequisite',FALSE,'Run scenario 3 first');
+ END IF;
  INSERT INTO PRODUCER_EVENTS(PRODUCER,PROCESS_DATE,SOURCE_VERSION,STATUS,WATERMARK,ROW_COUNT)
  SELECT PRODUCER,'2025-01-07','V1','SUCCESS','2025-01-07',101 FROM DEPENDENCIES;
  CALL CAPTURE_EVENTS(FALSE);
@@ -93,6 +134,17 @@ BEGIN
  CALL WATCHDOG('2025-01-07 14:00:00');
  SELECT COUNT(*) INTO :value_count FROM HISTORY;
  CALL ASSERT_TEST('Watchdog recovers durable pending work',:value_count=111,'No additional producer event');
+ RETURN 'PASS: 3 assertions; day two recovered with no new receipt';
+END; $$;
+
+CREATE OR REPLACE PROCEDURE TEST_05_REPLAY_AND_PARITY()
+RETURNS VARCHAR LANGUAGE SQL AS $$
+DECLARE value_count NUMBER; after_rows NUMBER;
+BEGIN
+ SELECT COUNT(*) INTO :value_count FROM COMPLETIONS;
+ IF(value_count<>4) THEN
+  CALL ASSERT_TEST('Scenario 5 prerequisite',FALSE,'Run scenario 4 first');
+ END IF;
  INSERT INTO PRODUCER_EVENTS(PRODUCER,PROCESS_DATE,SOURCE_VERSION,STATUS,WATERMARK,ROW_COUNT)
  SELECT PRODUCER,'2025-01-08','V1','SUCCESS','2025-01-08',101 FROM DEPENDENCIES;
  CALL CAPTURE_EVENTS(FALSE);
@@ -110,6 +162,22 @@ BEGIN
  CALL CAPTURE_EVENTS(FALSE);
  SELECT COUNT(*) INTO :value_count FROM COMPLETIONS;
  CALL ASSERT_TEST('Empty wake-up is harmless',:value_count=6,'No new work');
+ -- Independent row-level oracle: compare both directions, not only totals.
+ SELECT COUNT(*) INTO :value_count FROM (
+ WITH expected_history AS (
+  SELECT SEQ4()+1 AS ENTITY_ID,FALSE AS ELIGIBLE,'2025-01-06'::DATE AS VALID_FROM,
+   IFF(ENTITY_ID<=10,'2025-01-07'::DATE,NULL) AS VALID_TO
+  FROM TABLE(GENERATOR(ROWCOUNT=>100))
+  UNION ALL
+  SELECT IFF(SEQ4()=10,101,SEQ4()+1),TRUE,'2025-01-07'::DATE,NULL
+  FROM TABLE(GENERATOR(ROWCOUNT=>11))
+ ), missing_rows AS (SELECT * FROM expected_history MINUS SELECT * FROM HISTORY),
+ extra_rows AS (SELECT * FROM HISTORY MINUS SELECT * FROM expected_history)
+ SELECT * FROM missing_rows UNION ALL SELECT * FROM extra_rows
+ );
+ CALL ASSERT_TEST('Exact historical rows match oracle',:value_count=0,'Bidirectional row comparison including interval endpoints');
+ SELECT COUNT(*) INTO :value_count FROM INVENTORY;
+ SELECT COALESCE(SUM(DAY_COUNT),0) INTO :after_rows FROM INVENTORY;
+ CALL ASSERT_TEST('Inventory cardinality and total',:value_count=101 AND :after_rows=302,'101 entities / 302 total days');
+ RETURN 'PASS: 6 assertions; final parity checked';
 END; $$;
-SELECT * FROM TEST_RESULTS ORDER BY RECORDED_AT;
-SELECT * FROM QUALITY_RESULTS WHERE NOT PASSED ORDER BY CHECKED_AT;
